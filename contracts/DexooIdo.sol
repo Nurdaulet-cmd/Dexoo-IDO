@@ -11,10 +11,11 @@ contract IDO is Ownable, Pausable {
     uint8 constant TEAM_PERCENTAGE = 10;
     uint8 constant TEAM_FREEZE_DURATION_IN_MONTHS = 12;
     uint8 constant TEAM_LOCK_DURATION_IN_MONTH = 24;
-    uint8 constant PUBLIC_PERCENTAGE = 10;
     uint8 constant PUBLIC_IMMEDIATE_UNLOCK_PERCENTAGE = 20;
     uint8 constant PUBLIC_UNLOCK_PER_MONTH_PERCENTAGE = 10;
     uint8 constant PUBLIC_LOCK_DURATION_IN_MONTHS =10;
+    uint8 constant PRESALE_IMMEDIATE_UNLOCK_PERCENTAGE = 25;
+    uint8 constant PRESALE_LOCK_DURATION_IN_MONTHS = 15;
     uint8 constant FOUNDATION_FREEZE_DURATION_IN_MONTHS = 12;
     uint8 constant FOUNDATION_LOCK_DURATION_IN_MONTHS = 10;
     uint8 constant STAKING_PERCENTAGE = 20;
@@ -27,6 +28,15 @@ contract IDO is Ownable, Pausable {
     uint8 constant YIELD_FARMING_VESTING_PERIOD = 12;
     uint8 constant YIELD_FARMING_FIRST_YEAR_LOCK_DURATION_IN_MONTHS = 12;
     uint8 constant YIELD_FARMING_SECOND_YEAR_LOCK_DURATION_IN_MONTHS = 12;
+
+
+    event TokensTransferedToStakingBalance(address indexed sender, uint256 indexed amount);
+
+    event ShareReleased(address indexed beneficiary, uint256 indexed amount);
+
+    event TokensPurchased(address indexed buyer, uint256 spentAmount, uint256 indexed issuedAmount);
+
+    event TokensUnlocked(address indexed buyer, uint256 unlockedAmount);
 
     
     // <================================ MODIFIERS ================================>
@@ -48,7 +58,21 @@ contract IDO is Ownable, Pausable {
         uint256 lastWithdraw;
         uint256 initialTotalBalance;
         uint256 balance;
-        uint256 busdLimit;
+        uint256 immediateBalance;
+    }
+
+    struct AirDropBuyer {
+        uint256 totalSupply;
+        uint256 balance;
+        address airDropAddress;
+        uint16 totalCount;
+    }
+
+    struct PreSaleBuyer {
+        uint256 lastWithdraw;
+        uint256 initialTotalBalance;
+        uint256 balance;
+        uint256 immediateBalance;
     }
 
 
@@ -101,7 +125,8 @@ contract IDO is Ownable, Pausable {
         address stakingAddress,
         address liquidityAddress,
         address yieldFarmingAddress,
-        address advisorAddress) 
+        address advisorAddress,
+        address airDropAddress) 
     {
         require(dexooAddress != address(0), "IDO: DEXOO token address must not be zero");
         require(busdAddress != address(0), "IDO: BUSD token address must not be zero");
@@ -110,7 +135,8 @@ contract IDO is Ownable, Pausable {
         require(stakingAddress != address(0), "IDO: Staking address must not be zero");
         require(liquidityAddress != address(0), "IDO: Liquidity address must not be zero");
         require(yieldFarmingAddress != address(0), "IDO: Liquidity address must not be zero");
-         require(advisorAddress != address(0), "IDO: Liquidity address must not be zero");
+        require(advisorAddress != address(0), "IDO: Liquidity address must not be zero");
+        require(airDropAddress != address(0), "IDO: Liquidity address must not be zero");
 
 
         _dexoo = IERC20(dexooAddress);
@@ -120,6 +146,7 @@ contract IDO is Ownable, Pausable {
         _foundationShare.foundationAddress = foundationAddress;
         _stakingShare.stakingAddress = stakingAddress;
         _liquidityAddress = liquidityAddress;      
+        _airDropAddress = airDropAddress;
         _farmingShare.yieldFarmingAddress = yieldFarmingAddress;  
         _farmingShare.releaseFirstYearTime = block.timestamp + _monthsSinceDate(YIELD_FARMING_VESTING_PERIOD);
         _teamShare.releaseTime = block.timestamp + _monthsToTimestamp(TEAM_FREEZE_DURATION_IN_MONTHS);
@@ -133,7 +160,7 @@ contract IDO is Ownable, Pausable {
         contractNotStarted
     {
         uint256 totalSupply = _dexoo.totalSupply();
-        uint256 initialSupply = 886500000 * 10 ** 6;
+        uint256 initialSupply = 900000000 * 10 ** 6;
 
         _teamShare.share = (totalSupply * TEAM_PERCENTAGE) / 100;
         _teamShare.initialTotalBalance = 3750000 * 10 ** 6;
@@ -143,16 +170,12 @@ contract IDO is Ownable, Pausable {
         _stakingShare.balance = (totalSupply * STAKING_PERCENTAGE) / 100;
         _stakingShare.initialTotalBalance = 7500000 * 10 ** 6;
         liquidityBalance = 90000000 * 10 ** 6;
+        airDropBalance = 9000000 * 10 ** 6;
         _farmingShare.balance = (totalSupply * YIELD_FARMING_PERCENTAGE) / 100;
         _farmingShare.initialTotalBalanceFirstYear = 15000000 * 10 **6;
         _farmingShare.initialTotalBalanceSecondYear = 7500000 * 10 ** 6;
         _advisorShare.balance = 45000000 * 10 ** 6;
         _advisorShare.initialTotalBalance = 2500000 * 10 ** 6;
-
-
-        
-
-
         _contractStarted = true;
         _startDate = (block.timestamp - (block.timestamp % 1 days)) + 10 hours;
         transferTokensToContract(initialSupply);
@@ -165,109 +188,158 @@ contract IDO is Ownable, Pausable {
     Share public _teamShare;
     address public _liquidityAddress;
     uint256 private liquidityBalance;
+    address _airDropAddress;
+    uint256 private airDropBalance;
     PublicSale public _publicSale;
     FoundationShare public _foundationShare;
     StakingShare public _stakingShare;
     YieldFarmingShare public _farmingShare;
     AdvisorShare public _advisorShare;
+    AirDropShare public _airDropShare;;
     bool public _contractStarted; // true when contract has been initialized
     bool public _publicSaleEnded; // true if ended and false if still active
     mapping (address => PSBuyer) private psBuyers;
-
+    mapping (address => PreSaleBuyer) private preSaleBuyers;
+    mapping(address => AirDropBuyer) private airDropBuyers;
     // <================================ EXTERNAL FUNCTIONS ================================>
 
-    function buyTokens(uint256 busdAmount) 
+
+    function withdrawPreSaleUnlockedTokens()
     external
     whenNotPaused
     returns(bool) {
         address buyer = _msgSender();
+        uint256 monthsSinceDate = _monthsSinceDate(_publicSale.unlockStartDate);
+        require(isPresaleBuyer(buyer), "IDO: The user hasn't participated in Pre Sale or has already withdrawn all his balance");
         require(!_publicSaleEnded, "IDO: Public sale has already finished");
-        if(!isPublicSaleBuyer(buyer)) {
-            PSBuyer storage psBuyer = psBuyers[buyer];
-            psBuyer.busdLimit = 500e18;
-        }
+        PreSaleBuyer storage preSaleBuyer = preSaleBuyers[buyer];
         require(buyer != address(0), "IDO: Token issue to Zero address is prohibited");
-        require(busdAmount > 0, "IDO: Provided BUSD amount must be higher than 0");
-        require(busdAmount <= psBuyers[buyer].busdLimit, "IDO: The Provided BUSD amount exceeds allowed spend limit");
-        uint256 dexooPrice = getTokenPrice();
-        uint256 tokensAmountToIssue = busdAmount / dexooPrice; // The total number of full tokens that will be issued. 1 Full DEXOO token = 1000 tokens in full decimal precision
-        require(tokensAmountToIssue > 0, "IDO: Provided BUSD amount is not sufficient to buy even one DEXOO token");
-        uint256 totalPrice = tokensAmountToIssue * dexooPrice; //Total price in BUSD to buy specific number of DEXOO tokens
-        uint256 megaTokensToIssue = toMegaToken(tokensAmountToIssue); //Total amount of DEXOO tokens (in full decimal precision) to issue
-        require(_publicSale.supply >= megaTokensToIssue, "IDO: There are not enough public sale tokens available to be issued for provided BUSD amount");
+        uint256 dexooToUnlock;
+        if (preSaleBuyer.immediateBalance != 0) {
+            dexooToUnlock = preSaleBuyer.immediateBalance;
+            _dexoo.safeTransfer(buyer, dexooToUnlock);
+            return true;
 
-        require(_issueTokens(buyer, totalPrice, megaTokensToIssue), "IDO: Token transfer failed");
-        psBuyers[buyer].busdLimit -= totalPrice;
-        return true;
+        }
+        else{
+            require(preSaleBuyer.lastWithdraw < PRESALE_LOCK_DURATION_IN_MONTHS, "IDO: Buyer has already withdrawn all available unlocked tokens");
+            require(monthsSinceDate != preSaleBuyer.lastWithdraw, "IDO: Buyer has already withdrawn tokens this month");
+            if(monthsSinceDate >= PRESALE_LOCK_DURATION_IN_MONTHS){
+                 dexooToUnlock = preSaleBuyer.balance;
+                _removePublicSaleBuyer(buyer);
+            }else {
+                dexooToUnlock = preSaleBuyer.balance / PRESALE_LOCK_DURATION_IN_MONTHS;
+                preSaleBuyer.balance -= dexooToUnlock;
+                preSaleBuyer.lastWithdraw = monthsSinceDate;
+
+            }
+            _dexoo.safeTransfer(buyer, dexooToUnlock);
+        
+            emit TokensUnlocked(buyer, dexooToUnlock);
+            return true;
+
+        }
     }
 
-    function withdrawUnlockedTokens() 
+    function withdrawPreSaleUnlockedTokens()
     external
     whenNotPaused
     returns(bool) {
         address buyer = _msgSender();
-        require(_publicSaleEnded, "IDO: Can not withdraw balance yet. Public Sale is not over yet");
         uint256 monthsSinceDate = _monthsSinceDate(_publicSale.unlockStartDate);
-        require(monthsSinceDate > 0, "IDO: Can not withdraw balance yet");
+        require(isPresaleBuyer(buyer), "IDO: The user hasn't participated in Pre Sale or has already withdrawn all his balance");
+        require(!_publicSaleEnded, "IDO: Public sale has already finished");
+        PreSaleBuyer storage preSaleBuyer = preSaleBuyers[buyer];
         require(buyer != address(0), "IDO: Token issue to Zero address is prohibited");
-        require(isPublicSaleBuyer(buyer), "IDO: The user hasn't participated in Public Sale or has already withdrawn all his balance");
-        PSBuyer storage psBuyer = psBuyers[buyer];
-        require(psBuyer.lastWithdraw < PUBLIC_LOCK_DURATION_IN_MONTHS, "IDO: Buyer has already withdrawn all available unlocked tokens");
-        require(monthsSinceDate != psBuyer.lastWithdraw, "IDO: Buyer has already withdrawn tokens this month");
-        uint256 unlockForMonths = monthsSinceDate - psBuyer.lastWithdraw;
         uint256 dexooToUnlock;
-        if(monthsSinceDate >= PUBLIC_LOCK_DURATION_IN_MONTHS)
-        {
-            dexooToUnlock = psBuyer.balance;
-            _removePublicSaleBuyer(buyer);
-        } else {
-            dexooToUnlock = psBuyer.initialTotalBalance * (PUBLIC_UNLOCK_PER_MONTH_PERCENTAGE * unlockForMonths) / 100;
-            psBuyer.balance -= dexooToUnlock;
-            psBuyer.lastWithdraw = monthsSinceDate;
+        if (preSaleBuyer.immediateBalance != 0) {
+            dexooToUnlock = preSaleBuyer.immediateBalance;
+            _dexoo.safeTransfer(buyer, dexooToUnlock);
+            return true;
+
+        }
+        else{
+            require(preSaleBuyer.lastWithdraw < PRESALE_LOCK_DURATION_IN_MONTHS, "IDO: Buyer has already withdrawn all available unlocked tokens");
+            require(monthsSinceDate != preSaleBuyer.lastWithdraw, "IDO: Buyer has already withdrawn tokens this month");
+            if(monthsSinceDate >= PRESALE_LOCK_DURATION_IN_MONTHS){
+                 dexooToUnlock = preSaleBuyer.balance;
+                _removePublicSaleBuyer(buyer);
+            }else {
+                dexooToUnlock = preSaleBuyer.balance / PRESALE_LOCK_DURATION_IN_MONTHS;
+                preSaleBuyer.balance -= dexooToUnlock;
+                preSaleBuyer.lastWithdraw = monthsSinceDate;
+
+            }
+            _dexoo.safeTransfer(buyer, dexooToUnlock);
+        
+            emit TokensUnlocked(buyer, dexooToUnlock);
+            return true;
+
+        }
+    }
+
+    function withdrawnAirDropTokens() external whenNotPaused returns(bool) {
+        address buyer = _msgSender();
+        uint256 monthsSinceDate = _monthsSinceDate(_publicSale.unlockStartDate);
+        require(isAirDropBuyer(buyer), "IDO: The user hasn't participated in Pre Sale or has already withdrawn all his balance");
+        require(!_publicSaleEnded, "IDO: Public sale has already finished");
+        AirDropBuyer storage airDropBuyer = airDropBuyer[buyer];
+        require(buyer != address(0), "IDO: Token issue to Zero address is prohibited");
+        uint256 dexooToUnlock = airDropBuyer.balance / airDropBuyer.totalCount;
+        
+        _dexoo.safeTransfer(buyer, dexooToUnlock);
+        return true;
+
         }
 
-        _dexoo.safeTransfer(buyer, dexooToUnlock);
+    function withdrawAirdrodOwnerTokens() external whenNotPaused  returns(bool) {
+        address tokenOwner = _msgSender();
+        require(tokenOwner == _airdropAddress, "IDO: Withdrawal is available only to the airdrop owner");
         
-        emit TokensUnlocked(buyer, dexooToUnlock);
+        _dexoo.safeTransfer(tokenOwner, airDropBalance);
+        
+        emit TokensUnlocked(tokenOwner, airDropBalance);
         return true;
     }
 
-    function withdrawFoundationUnlockedTokens() external whenNotPaused returns(bool){
-        
-        address tokenOwner = _msgSender();
-        uint256 monthsSinceDate = _monthsSinceDate(_publicSale.unlockStartDate);
-        require(tokenOwner == _foundationShare.foundationAddress, "IDO: Withdrawal is available only to the advisor");
-        require(_foundationShare.lastWithdraw < FOUNDATION_LOCK_DURATION_IN_MONTHS, "IDO: Buyer has already withdrawn all available unlocked tokens");
-        require(monthsSinceDate != _foundationShare.lastWithdraw, "IDO: Buyer has already withdrawn tokens this month");
-        uint256 dexooToUnlock;
-        
-        dexooToUnlock = _foundationShare.initialTotalBalance;
-        _foundationShare.balance -= dexooToUnlock;
-        _foundationShare.lastWithdraw = monthsSinceDate;
-    
-        _dexoo.safeTransfer(tokenOwner, dexooToUnlock);
-        
-        emit TokensUnlocked(tokenOwner, dexooToUnlock);
-        return true;
-
     }
-    function withdrawStakingUnlockedTokens() external whenNotPaused returns(bool){
-        
-        address tokenOwner = _msgSender();
-        uint256 monthsSinceDate = _monthsSinceDate(_publicSale.unlockStartDate);
-        require(tokenOwner == _stakingShare.stakingAddress, "IDO: Withdrawal is available only to the staking");
-        require(_stakingShare.lastWithdraw < STAKING_LOCK_DURATION_IN_MONTH, "IDO: Buyer has already withdrawn all available unlocked tokens");
-        require(monthsSinceDate != _stakingShare.lastWithdraw, "IDO: Buyer has already withdrawn tokens this month");
-        uint256 dexooToUnlock;
-        dexooToUnlock = _stakingShare.initialTotalBalance;
-        _stakingShare.balance -= dexooToUnlock;
-        _stakingShare.lastWithdraw = monthsSinceDate;
-    
-        _dexoo.safeTransfer(tokenOwner, dexooToUnlock);
-        
-        emit TokensUnlocked(tokenOwner, dexooToUnlock);
-        return true;
 
+
+    function withdrawPublicUnlockedTokens()
+    external
+    whenNotPaused
+    returns(bool) {
+        address buyer = _msgSender();
+        uint256 monthsSinceDate = _monthsSinceDate(_publicSale.unlockStartDate);
+        require(isPublicSaleBuyer(buyer), "IDO: The user hasn't participated in Pre Sale or has already withdrawn all his balance");
+        require(!_publicSaleEnded, "IDO: Public sale has already finished");
+        PSBuyer storage psBuyer = psBuyers[buyer];
+        require(buyer != address(0), "IDO: Token issue to Zero address is prohibited");
+        uint256 dexooToUnlock;
+        if (psBuyer.immediateBalance != 0) {
+            dexooToUnlock = psBuyer.immediateBalance;
+            _dexoo.safeTransfer(buyer, dexooToUnlock);
+            return true;
+
+        }
+        else{
+            require(psBuyer.lastWithdraw < PUBLIC_LOCK_DURATION_IN_MONTHS, "IDO: Buyer has already withdrawn all available unlocked tokens");
+            require(monthsSinceDate != psBuyer.lastWithdraw, "IDO: Buyer has already withdrawn tokens this month");
+            if(monthsSinceDate >= PRESALE_LOCK_DURATION_IN_MONTHS){
+                 dexooToUnlock = psBuyer.balance;
+                _removePublicSaleBuyer(buyer);
+            }else {
+                dexooToUnlock = psBuyer.balance / PUBLIC_LOCK_DURATION_IN_MONTHS;
+                psBuyer.balance -= dexooToUnlock;
+                psBuyer.lastWithdraw = monthsSinceDate;
+
+            }
+            _dexoo.safeTransfer(buyer, dexooToUnlock);
+        
+            emit TokensUnlocked(buyer, dexooToUnlock);
+            return true;
+
+        }
     }
 
     function withdrawAdvisorUnlockedTokens() external whenNotPaused returns(bool){
@@ -356,6 +428,22 @@ contract IDO is Ownable, Pausable {
         return false;
     }
 
+    function isPresaleBuyer(address buyer) public view returns(bool) {
+         if(preSaleBuyers[buyer].initialTotalBalance != 0) {
+            return true;
+        }
+        return false;
+    }
+
+     function isAirDropBuyer(address buyer) public view returns(bool) {
+         if(airDropBuyers[buyer].balance != 0) {
+            return true;
+        }
+        return false;
+    }
+
+
+
     function transferTokensToContract(uint256 amount) public onlyOwner
     {
         address owner = _msgSender();
@@ -417,10 +505,6 @@ contract IDO is Ownable, Pausable {
 
     function _daysSinceDate(uint256 _timestamp) private view returns(uint256){
         return  (block.timestamp - _timestamp) / 1 days;
-    }
-
-    function getBuyerLimit(address buyer) external view returns(uint256){
-        return isPublicSaleBuyer(buyer) ? psBuyers[buyer].busdLimit : 500e18;
     }
 
     function getBuyerLockedBalance(address buyer) external view returns(uint256){
@@ -495,13 +579,5 @@ contract IDO is Ownable, Pausable {
     function decimals() internal pure returns(uint8) {
         return 6;
     }
-    // <================================ EVENTS ================================>
 
-    event TokensTransferedToStakingBalance(address indexed sender, uint256 indexed amount);
-
-    event ShareReleased(address indexed beneficiary, uint256 indexed amount);
-
-    event TokensPurchased(address indexed buyer, uint256 spentAmount, uint256 indexed issuedAmount);
-
-    event TokensUnlocked(address indexed buyer, uint256 unlockedAmount);
 }
