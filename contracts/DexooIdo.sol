@@ -208,8 +208,7 @@ contract IDO is Ownable, Pausable {
     mapping (address => PreSaleBuyer) private preSaleBuyers;
     mapping(address => AirDropBuyer) private airDropBuyers;
     // <================================ EXTERNAL FUNCTIONS ================================>
-
-
+ 
     function withdrawPreSaleUnlockedTokens()
     external
     whenNotPaused
@@ -232,44 +231,7 @@ contract IDO is Ownable, Pausable {
             require(monthsSinceDate != preSaleBuyer.lastWithdraw, "IDO: Buyer has already withdrawn tokens this month");
             if(monthsSinceDate >= PRESALE_LOCK_DURATION_IN_MONTHS){
                  dexooToUnlock = preSaleBuyer.balance;
-                _removePublicSaleBuyer(buyer);
-            }else {
-                dexooToUnlock = preSaleBuyer.balance / PRESALE_LOCK_DURATION_IN_MONTHS;
-                preSaleBuyer.balance -= dexooToUnlock;
-                preSaleBuyer.lastWithdraw = monthsSinceDate;
-
-            }
-            _dexoo.safeTransfer(buyer, dexooToUnlock);
-        
-            emit TokensUnlocked(buyer, dexooToUnlock);
-            return true;
-
-        }
-    }
-
-    function withdrawPreSaleUnlockedTokens()
-    external
-    whenNotPaused
-    returns(bool) {
-        address buyer = _msgSender();
-        uint256 monthsSinceDate = _monthsSinceDate(_publicSale.unlockStartDate);
-        require(isPresaleBuyer(buyer), "IDO: The user hasn't participated in Pre Sale or has already withdrawn all his balance");
-        require(!_publicSaleEnded, "IDO: Public sale has already finished");
-        PreSaleBuyer storage preSaleBuyer = preSaleBuyers[buyer];
-        require(buyer != address(0), "IDO: Token issue to Zero address is prohibited");
-        uint256 dexooToUnlock;
-        if (preSaleBuyer.immediateBalance != 0) {
-            dexooToUnlock = preSaleBuyer.immediateBalance;
-            _dexoo.safeTransfer(buyer, dexooToUnlock);
-            return true;
-
-        }
-        else{
-            require(preSaleBuyer.lastWithdraw < PRESALE_LOCK_DURATION_IN_MONTHS, "IDO: Buyer has already withdrawn all available unlocked tokens");
-            require(monthsSinceDate != preSaleBuyer.lastWithdraw, "IDO: Buyer has already withdrawn tokens this month");
-            if(monthsSinceDate >= PRESALE_LOCK_DURATION_IN_MONTHS){
-                 dexooToUnlock = preSaleBuyer.balance;
-                _removePublicSaleBuyer(buyer);
+                _removePreSaleBuyer(buyer);
             }else {
                 dexooToUnlock = preSaleBuyer.balance / PRESALE_LOCK_DURATION_IN_MONTHS;
                 preSaleBuyer.balance -= dexooToUnlock;
@@ -300,7 +262,7 @@ contract IDO is Ownable, Pausable {
 
     function withdrawAirdrodOwnerTokens() external whenNotPaused  returns(bool) {
         address tokenOwner = _msgSender();
-        require(tokenOwner == _airdropAddress, "IDO: Withdrawal is available only to the airdrop owner");
+        require(tokenOwner == _airDropAddress, "IDO: Withdrawal is available only to the airdrop owner");
         
         _dexoo.safeTransfer(tokenOwner, airDropBalance);
         
@@ -308,7 +270,6 @@ contract IDO is Ownable, Pausable {
         return true;
     }
 
-    }
 
 
     function withdrawPublicUnlockedTokens()
@@ -571,6 +532,12 @@ contract IDO is Ownable, Pausable {
     function _removePublicSaleBuyer(address buyer) private {
         if(isPublicSaleBuyer(buyer)) {
             delete psBuyers[buyer];
+        }
+    }
+
+    function _removePreSaleBuyer(address buyer) private {
+        if(isPresaleBuyer(buyer)) {
+            delete preSaleBuyers[buyer];
         }
     }
 
