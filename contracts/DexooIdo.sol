@@ -114,6 +114,11 @@ contract IDO is Ownable, Pausable {
         uint256 supply;
         uint256 unlockStartDate;
     }
+
+    struct PreSale {
+        uint256 supply;
+        uint256 unlockStartDate;
+    }
     
     // <================================ CONSTRUCTOR AND INITIALIZER ================================>
 
@@ -164,7 +169,8 @@ contract IDO is Ownable, Pausable {
 
         _teamShare.share = (totalSupply * TEAM_PERCENTAGE) / 100;
         _teamShare.initialTotalBalance = 3750000 * 10 ** 6;
-        _publicSale.supply = (totalSupply * PUBLIC_PERCENTAGE) / 100;
+        _publicSale.supply = 76500000 * 10 ** 6;
+        _preSale.supply = 13500000 * 10 ** 6;
         _foundationShare.balance = 121500000 * 10 ** 6; 
         _foundationShare.initialTotalBalance = 12150000 * 10 ** 6;
         _stakingShare.balance = (totalSupply * STAKING_PERCENTAGE) / 100;
@@ -191,11 +197,11 @@ contract IDO is Ownable, Pausable {
     address _airDropAddress;
     uint256 private airDropBalance;
     PublicSale public _publicSale;
+    PreSale public _preSale;
     FoundationShare public _foundationShare;
     StakingShare public _stakingShare;
     YieldFarmingShare public _farmingShare;
     AdvisorShare public _advisorShare;
-    AirDropShare public _airDropShare;;
     bool public _contractStarted; // true when contract has been initialized
     bool public _publicSaleEnded; // true if ended and false if still active
     mapping (address => PSBuyer) private psBuyers;
@@ -283,7 +289,7 @@ contract IDO is Ownable, Pausable {
         uint256 monthsSinceDate = _monthsSinceDate(_publicSale.unlockStartDate);
         require(isAirDropBuyer(buyer), "IDO: The user hasn't participated in Pre Sale or has already withdrawn all his balance");
         require(!_publicSaleEnded, "IDO: Public sale has already finished");
-        AirDropBuyer storage airDropBuyer = airDropBuyer[buyer];
+        AirDropBuyer storage airDropBuyer = airDropBuyers[buyer];
         require(buyer != address(0), "IDO: Token issue to Zero address is prohibited");
         uint256 dexooToUnlock = airDropBuyer.balance / airDropBuyer.totalCount;
         
